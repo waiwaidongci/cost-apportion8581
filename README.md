@@ -7,6 +7,13 @@
 
 模块：业务总览、业务底稿、新建口径版本、异步核算与复核、定时交付、站内收件箱、审计。底稿可新增/修改/删除；口径仅新增版本；报告提交时冻结来源与版本并保存SHA256。定时交付引用已复核报告快照，worker到期写入数据库，业务阅读者下载。
 
+## 可靠性：数据库权威任务、租约接管与崩溃恢复
+- **以数据库任务为准**：Run 即任务行（queued/running/completed/failed），Redis 列表仅作低延迟唤醒提示；提示丢失或缓存队列被清空，worker 每轮无条件扫描数据库补领，任务不会永久卡住。
+- **租约与并行执行者**：领取是单条条件 UPDATE（状态可领且租约为空/过期），多个 worker 并行只有一人成功，可用 `docker compose up -d --scale worker=N` 水平扩容。持有者靠心跳续租；租约（`WORKER_LEASE_SECONDS`，默认15秒）过期后任意执行者可接管，`attempts` 累加、更换 `worker_id`，接管沿用报告最初冻结的底稿与口径（snapshot/checksum 不变）。
+- **迟到结果无权覆盖**：完成与失败都带“当前持有者 + running”条件更新；旧执行者即使晚到，其结果/失败也无法覆盖新持有者状态，只能丢弃。
+- **交付 outbox**：计划推进与“待交付事件”在同一事务落盘；崩溃后重启重放。Delivery 的 `due_key` 唯一约束兜底，重复执行/并发领取同一到期计划都只生成一份，且固定引用原报告 run_id 与快照。
+- **故障注入**：`fault_rules` 表提供三个一次性开关，覆盖取走任务（claim）、保存结果（result）、写成交付（deliver）三个时点，命中即在事务落盘后 `os._exit(88)` 模拟硬崩溃；规则触发后自动关闭。前端“定时交付”页可布防/解除，并展示执行者、领取次数、租约与待重放事件，既有报告与交付仍可查看下载。自动化验证见 `backend/tests`（16 个 pytest 用例）与 `backend/tests/e2e_demo.py`（真实多进程崩溃-接管-重放演练）。
+
 ## 算法口径
 按工时权重分摊公共成本、整数分最大余数守恒与差异透视。1分三权重守恒与稳定tie；零权重拒绝；透视总数等于源数。
 
@@ -17,7 +24,7 @@
 2. 09:10 analyst添加`cost-apportion-202611.csv`的一条具名业务记录。
 3. 09:20 admin在口径版本页登记新版本；旧版本保留。
 4. 09:30 analyst命名“十一月核算”并选择期间/版本排队。
-5. 09:31 Redis worker真实执行Python计算，展示汇总/透视与口径边界。
+5. 09:31 worker真实执行Python计算，展示汇总/透视与口径边界；进程崩溃也会在租约过期后由执行者接管，页面可见执行者与领取次数。
 6. 09:40 admin核对数值后填写至少4字复核说明。
 7. 09:45 admin建立60秒周期计划，worker到期生成站内持久化交付。
 8. 09:46 viewer在站内收件箱下载交付CSV；审计页查看操作者与时间。
@@ -44,7 +51,7 @@ Python3.11/FastAPI/SQLAlchemy/Redis，PostgreSQL16；前端原生HTML/CSS/JS ES 
 环境变量：COMPOSE_PROJECT_NAME、FRONTEND_PORT、BACKEND_PORT、DB_PORT、JWT_SECRET（部署替换）、DATABASE_URL、REDIS_URL、SEED_DEMO。`.env`不入Git。数据库/Redis/共享产物为命名卷。共享角色枚举admin/analyst/viewer与状态queued/running/completed/failed分别定义于backend/src/constants/enums.py和frontend/src/constants/enums.js。两个中间件：统一可恢复校验错误、每IP每分钟360请求限流。
 
 ## 已知边界
-定时分发为站内收件箱；一名worker轮询执行，无外部邮件。调度发送已复核固定报告快照，不自动重算新数据。时间显示Asia/Shanghai。报告导出适合小型数据；底稿全量加载240行演示数据。Google Fonts不可用时回退serif。后端API以专属字段对象收发，页面通过业务输入控件编辑，不要求用户写JSON。新增来源期间自动可选；专属字段和算法严格校验。JWT演示有效期2小时。
+定时分发为站内收件箱；无外部邮件，worker 可多副本并行（默认起 1 个，`--scale worker=N` 扩容）。调度发送已复核固定报告快照，不自动重算新数据。时间显示Asia/Shanghai。报告导出适合小型数据；底稿全量加载240行演示数据。Google Fonts不可用时回退serif。后端API以专属字段对象收发，页面通过业务输入控件编辑，不要求用户写JSON。新增来源期间自动可选；专属字段和算法严格校验。JWT演示有效期2小时。故障注入仅用于演练，规则一次性、触发即自动关闭，生产环境不应布防。
 
 MIT License。
 

@@ -41,9 +41,11 @@ services:
       retries: 45
   worker:
     build: ./backend
-    container_name: ${COMPOSE_PROJECT_NAME:-cost-apportion}-worker
+    # 不固定容器名，可 docker compose up -d --scale worker=N 并行多执行者
     command: python -m src.worker
-    environment: *backend-env
+    environment:
+      <<: *backend-env
+      WORKER_LEASE_SECONDS: "${WORKER_LEASE_SECONDS:-15}"
     volumes: ["report-files:/app/artifacts"]
     depends_on:
       backend: {condition: service_healthy}

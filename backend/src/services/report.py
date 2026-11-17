@@ -14,7 +14,10 @@ def submit(db,user,body):
  checksum=hashlib.sha256(json.dumps(snapshot,sort_keys=True,ensure_ascii=False).encode()).hexdigest()
  obj=Run(name=body.name,status='queued',snapshot=snapshot,checksum=checksum,created=time.time(),approved=False)
  db.add(obj);log(db,user.email,'run.queue',body.name);db.commit()
- redis.Redis.from_url(REDIS_URL).rpush('report-jobs',obj.id)
+ try:
+  # 仅作低延迟唤醒提示；消息丢失/队列清空时 worker 仍会扫描数据库补领
+  redis.Redis.from_url(REDIS_URL,socket_connect_timeout=2,socket_timeout=2).rpush('report-jobs',obj.id)
+ except Exception: pass
  return obj
 def approve(db,user,id,note):
  obj=db.get(Run,id)

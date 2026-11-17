@@ -3,13 +3,14 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from src.config.database import Base,engine
 from src.config.settings import CONFIG,REDIS_URL
+from src.config.migrate import upgrade
 from src.models import identity,source,run
-from src.routes import auth,source as source_routes,reports,deliveries,audits
+from src.routes import auth,source as source_routes,reports,deliveries,audits,faults
 from src.middlewares.errors import Errors
 from src.middlewares.rate import RateLimit
 @asynccontextmanager
 async def lifespan(app):
- Base.metadata.create_all(engine)
+ upgrade()
  if os.getenv('SEED_DEMO')=='true':
   try:
    from scripts.seed_demo import seed
@@ -18,7 +19,7 @@ async def lifespan(app):
  yield
 app=FastAPI(title=CONFIG['title'],lifespan=lifespan)
 app.add_middleware(Errors);app.add_middleware(RateLimit)
-for module in (auth,source_routes,reports,deliveries,audits): app.include_router(module.router)
+for module in (auth,source_routes,reports,deliveries,audits,faults): app.include_router(module.router)
 @app.get('/health')
 def health():
  from sqlalchemy import text

@@ -2,7 +2,7 @@ from fastapi import APIRouter,Depends,HTTPException
 from fastapi.responses import Response
 from src.config.database import database
 from src.controllers.auth import current,admin
-from src.models.run import Schedule,Delivery
+from src.models.run import Schedule,Delivery,DeliveryOutbox
 from src.schemas.requests import ScheduleInput
 from src.services.delivery import add_schedule
 from src.services.export import csv_text
@@ -19,6 +19,9 @@ def toggle(id:int,db=Depends(database),u=Depends(admin)):
  obj.enabled=not obj.enabled;db.commit();return row(obj)
 @router.get('/deliveries')
 def deliveries(db=Depends(database),u=Depends(current)): return [row(x) for x in db.query(Delivery).order_by(Delivery.id.desc()).limit(100).all()]
+@router.get('/delivery-events')
+def delivery_events(db=Depends(database),u=Depends(current)):
+ return [row(x) for x in db.query(DeliveryOutbox).order_by(DeliveryOutbox.id.desc()).limit(100).all()]
 @router.get('/deliveries/{id}/csv')
 def download(id:int,db=Depends(database),u=Depends(current)):
  obj=db.get(Delivery,id)
